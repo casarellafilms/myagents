@@ -22,6 +22,7 @@ from .drain import drain
 from .render import _e_rumore
 from .paths import DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, utcnow
 from .schema import connect, migrate
+from .verify import riverifica_tutto
 
 PORTA = 7777
 INTERVALLO_TRAVASO = 20   # secondi
@@ -37,6 +38,10 @@ GIORNI_PRIMA_DI_AVVISARE = 2
 # Ogni quanto si ricontrolla quali terminali sono aperti e dove. Piu' fitto di
 # cosi' non serve: le finestre non si aprono e chiudono dieci volte al minuto.
 INTERVALLO_TERMINALI = 8
+# Ogni quanto si rieseguono i comandi di verifica salvati. Dieci minuti: e' il
+# meccanismo che chiude i task da solo, e non deve pesare -- ogni giro esegue
+# davvero dei comandi, quindi va tenuto raro e a lotti piccoli.
+INTERVALLO_RIVERIFICA = 600
 
 # Cosa e' gia' stato notificato, per non ripetersi a ogni giro: una notifica
 # che torna ogni quarto d'ora si impara a ignorare, e allora tanto vale non
@@ -159,6 +164,42 @@ def _cura_ogni_tanto() -> None:
             cura_adesso()
         except Exception:
             pass  # il revisore e' un extra: non deve mai fermare il servizio
+
+
+_ultima_riverifica = {"quando": 0.0, "chiusi": [], "riaperti": [], "esaminati": 0}
+
+
+def riverifica_adesso(massimo: int = 6) -> dict:
+    """Riesegue i comandi di verifica noti e aggiorna gli stati."""
+    if is_disabled():
+        return {"ok": False, "errore": "la cattura e' in pausa"}
+    conn = connect()
+    migrate(conn)
+    esito = riverifica_tutto(conn, massimo=massimo)
+    _ultima_riverifica.update(quando=time.time(), **esito)
+    for chiave in esito.get("riaperti", []):
+        # Un verde che smette di esserlo e' la cosa piu' importante che questo
+        # sistema possa dirti: si dice subito, non alla prossima occhiata.
+        _notifica("Verifica caduta", f"{chiave}: il comando non passa piu'")
+    return {"ok": True, **esito}
+
+
+def _riverifica_ogni_tanto() -> None:
+    """La via d'uscita automatica dei task.
+
+    Senza questo giro, l'unico modo di chiudere un task era lanciare `tk verify`
+    a mano -- e non lo lancia nessuno. I task entravano e non uscivano, la lista
+    cresceva, e una lista che cresce e non cala si smette di guardare.
+    Qui non decide nessun modello: si riesegue un comando gia' scritto e si
+    legge il codice di uscita.
+    """
+    while True:
+        time.sleep(INTERVALLO_RIVERIFICA)
+        try:
+            if not is_disabled():
+                riverifica_adesso()
+        except Exception:
+            pass  # mai fermare il servizio per una riverifica
 
 
 _pannelli_vivi: list = []
@@ -297,6 +338,7 @@ def stato() -> dict:
         # Senza questi tre numeri "non compaiono task" ha due spiegazioni
         # indistinguibili: non c'era niente da estrarre, oppure e' rotto.
         "revisore": {**_ultima_cura, "ogni": INTERVALLO_CURA},
+        "riverifica": {**_ultima_riverifica, "ogni": INTERVALLO_RIVERIFICA},
         "terminali": list(_pannelli_vivi),
         # Le squadre di agenti che stanno girando. Mentre lavorano non si vede
         # niente: si sa solo che qualcosa e' partito. Qui si vede chi c'e'
@@ -345,6 +387,9 @@ def azione(comando: str, dati: dict) -> dict:
 
     if comando == "travasa":
         return {"ok": True, "applicati": drain()}
+
+    if comando == "riverifica":
+        return riverifica_adesso()
 
     if comando == "cura":
         # Il revisore a richiesta: aspettare tre minuti per sapere se funziona
@@ -435,6 +480,7 @@ def avvia(porta: int = PORTA, in_background: bool = True) -> ThreadingHTTPServer
     threading.Thread(target=_cura_ogni_tanto, daemon=True).start()
     threading.Thread(target=_avvisa_ogni_tanto, daemon=True).start()
     threading.Thread(target=_guarda_i_terminali, daemon=True).start()
+    threading.Thread(target=_riverifica_ogni_tanto, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", porta), _Handler)
     if in_background:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()

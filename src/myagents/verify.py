@@ -145,6 +145,54 @@ def verifica_scaduta(conn, task_id: int) -> bool:
     return impronta_file(_file_del_task(conn, task_id)) != riga[1]
 
 
+def riverifica_tutto(conn, massimo: int = 6) -> dict:
+    """Riesegue i comandi di verifica gia' noti, e aggiorna gli stati da solo.
+
+    E' la via d'uscita che al sistema mancava. Senza, i task entravano e non
+    uscivano mai: il revisore ne creava, `tk verify` era l'unico modo di
+    chiuderne, e nessuno lo lanciava. Una lista che cresce e non cala smette di
+    essere un elenco di cose da fare e diventa rumore -- e il rumore si ignora,
+    che e' il modo piu' sicuro di rendere inutile tutto il resto.
+
+    Non e' un modello a decidere: si riesegue un comando che esiste gia' e si
+    guarda l'uscita. Un task verde il cui comando ora fallisce torna aperto; un
+    task aperto o dichiarato-fatto il cui comando passa diventa verde. Decide il
+    codice di uscita, non un'opinione.
+
+    Si riesegue solo cio' che ha un comando salvato: un task senza comando non
+    e' verificabile, e inventargliene uno sarebbe esattamente la scorciatoia che
+    questo progetto rifiuta.
+    """
+    candidati = conn.execute(
+        "SELECT task_key, status FROM tasks"
+        " WHERE verify_cmd IS NOT NULL AND verify_cmd != ''"
+        "   AND status IN ('open','in_progress','claimed','verified')"
+        " ORDER BY CASE status WHEN 'claimed' THEN 0 WHEN 'verified' THEN 1"
+        "   ELSE 2 END, last_touched_at ASC LIMIT ?", (massimo,)).fetchall()
+
+    chiusi, riaperti, invariati = [], [], 0
+    for chiave, prima in candidati:
+        esito = verifica(conn, chiave)
+        if not esito.get("ok"):
+            invariati += 1
+            continue
+        if esito.get("verde"):
+            if prima != "verified":
+                chiusi.append(chiave)
+        elif prima == "verified":
+            # Era verde e ora non passa piu'. Torna aperto: lasciarlo verde
+            # sarebbe la bugia peggiore che questo sistema possa dire.
+            conn.execute(
+                "UPDATE tasks SET status='open', verified_at=NULL,"
+                " verified_commit=NULL, verified_fingerprint=NULL, updated_at=?"
+                " WHERE task_key=?", (utcnow(), chiave))
+            riaperti.append(chiave)
+        else:
+            invariati += 1
+    return {"chiusi": chiusi, "riaperti": riaperti, "invariati": invariati,
+            "esaminati": len(candidati)}
+
+
 def scadute(conn) -> list:
     """I task verdi la cui verifica non vale piu'."""
     fuori = []

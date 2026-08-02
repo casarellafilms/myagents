@@ -175,6 +175,10 @@ _COLONNE_AGGIUNTE = [
     ("activity", "stderr", "TEXT"),
     ("activity", "interrupted", "INTEGER"),
     ("sessions", "source", "TEXT"),
+    # Il percorso del transcript della sessione. Serve al revisore per sapere
+    # non solo cosa e' stato chiesto, ma cosa l'agente ha risposto di aver
+    # fatto (rischio R3 della SPEC): senza, apre task per lavori gia' conclusi.
+    ("sessions", "transcript_path", "TEXT"),
 ]
 
 

@@ -73,8 +73,14 @@ green from three days ago on code changed yesterday isn't a verification, it's a
 
 **The reviewer.** When a session ends, a sandboxed `claude -p` reads the raw notes and
 proposes tasks. It runs with no tools at all, because it reads untrusted text — anything
-you paste into a chat passes through it. It can create tasks and suggestions. It can
-never mark anything verified.
+you paste into a chat passes through it. It can create tasks, and it can move a task to
+*yellow* when the session's own transcript shows the work was claimed done. It can never
+mark anything verified.
+
+**Tasks have a way out.** A list that only grows stops being a to-do list and becomes
+noise, and noise gets ignored. Every ten minutes the service re-runs the verify commands
+it already knows: a task whose command now passes closes itself, and a green task whose
+command stops passing reopens. No model decides this — an exit code does.
 
 **Nothing gets lost mid-turn.** Messages you send *while* the agent is working never
 fire the prompt hook — they're queued by the harness. Those are exactly the requests
@@ -123,6 +129,7 @@ tk list --project NAME
 tk projects                         # projects with open counts
 tk verify KEY --cmd "pytest -q"     # run it, record it — the only road to green
 tk cura                             # run the reviewer now, and report what it did
+tk riverifica                       # re-run known verify commands, update states
 tk terminali                        # open terminals and where they are
 tk dash                             # local service + dashboard on 127.0.0.1:7777
 tk doctor                           # health: db, spool, kill switch, error log

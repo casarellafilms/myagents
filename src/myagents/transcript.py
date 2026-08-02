@@ -132,6 +132,60 @@ def richieste(percorso: str) -> list:
     return fuori
 
 
+def risposte(percorso: str, massimo: int = 14) -> list:
+    """Cosa l'agente ha DETTO di aver fatto, in coda alla sessione.
+
+    Chiude il rischio R3 della specifica: il revisore vedeva le richieste e i
+    file toccati, mai le risposte. Senza di esse non puo' distinguere "l'utente
+    ha chiesto X" da "X e' stato fatto", e quindi crea un task aperto per ogni
+    richiesta -- comprese quelle gia' evase dieci minuti dopo. Misurato: in una
+    sessione sola ha aperto quattro task per lavori conclusi nella sessione
+    stessa. Un elenco di cose da fare che contiene cose fatte si smette di
+    guardare, ed e' il modo piu' rapido di rendere inutile tutto il resto.
+
+    Si prendono le ULTIME risposte, non le prime: le conclusioni stanno in
+    fondo. E solo il testo, non le chiamate agli strumenti, che sono rumore.
+
+    Attenzione a cosa NON e': questo resta cio' che l'agente DICHIARA. Non e'
+    una prova, e chi lo usa non deve trattarlo come tale -- serve a far passare
+    un task da "da fare" a "da controllare", mai a "verificato".
+    """
+    if not percorso:
+        return []
+    try:
+        if not os.path.isfile(percorso) or os.path.getsize(percorso) > MAX_BYTE:
+            return []
+    except OSError:
+        return []
+
+    fuori: list = []
+    try:
+        with open(percorso, encoding="utf-8", errors="replace") as fh:
+            for riga in fh:
+                if '"assistant"' not in riga:
+                    continue
+                try:
+                    dato = json.loads(riga)
+                except ValueError:
+                    continue
+                if (not isinstance(dato, dict) or dato.get("type") != "assistant"
+                        or dato.get("isSidechain")):
+                    continue
+                contenuto = (dato.get("message") or {}).get("content")
+                if not isinstance(contenuto, list):
+                    continue
+                testo = " ".join(
+                    b.get("text", "") for b in contenuto
+                    if isinstance(b, dict) and b.get("type") == "text")
+                testo = " ".join(testo.split())
+                if len(testo) < 40:
+                    continue  # frasi di servizio: non dicono cosa e' stato fatto
+                fuori.append(testo[:600])
+    except OSError:
+        pass
+    return fuori[-massimo:]
+
+
 def accodate(percorso: str) -> list:
     """Solo le richieste che gli hook NON possono aver visto.
 

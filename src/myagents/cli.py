@@ -124,6 +124,27 @@ def _cmd_cura(args) -> int:
     return 0
 
 
+def _cmd_riverifica(args) -> int:
+    """Riesegue i comandi di verifica salvati e aggiorna gli stati.
+
+    E' la via d'uscita dei task: senza, l'unico modo di chiuderne uno era
+    lanciare `tk verify` a mano, e la lista cresceva senza mai calare.
+    """
+    from .server import riverifica_adesso
+    esito = riverifica_adesso(massimo=args.massimo)
+    if not esito.get("ok"):
+        print(f"errore: {esito.get('errore')}", file=sys.stderr)
+        return 1
+    for k in esito.get("chiusi", []):
+        print(f"* {k:<32} VERIFICATO (il comando passa)")
+    for k in esito.get("riaperti", []):
+        print(f"! {k:<32} RIAPERTO (il comando non passa piu')")
+    print(f"\n{esito.get('esaminati', 0)} esaminati · "
+          f"{len(esito.get('chiusi', []))} chiusi · "
+          f"{len(esito.get('riaperti', []))} riaperti")
+    return 0
+
+
 def _cmd_terminali(_args) -> int:
     """I terminali aperti e su quale cartella stanno. L'asterisco marca quelli
     con una sessione dell'agente dentro."""
@@ -217,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     p_cura.add_argument("--massimo", type=int,
                         help="quante sessioni al massimo (default: decide da solo)")
     p_cura.set_defaults(func=_cmd_cura)
+
+    p_riv = sub.add_parser("riverifica",
+                           help="riesegue le verifiche note e aggiorna gli stati")
+    p_riv.add_argument("--massimo", type=int, default=6)
+    p_riv.set_defaults(func=_cmd_riverifica)
 
     sub.add_parser("terminali", help="i terminali aperti e dove stanno"
                    ).set_defaults(func=_cmd_terminali)
