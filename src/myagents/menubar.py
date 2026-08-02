@@ -153,11 +153,33 @@ class Barra(rumps.App):
         if p.get("nota"):
             voce.add(rumps.MenuItem("Copia cosa vede Claude qui",
                                     callback=self._copia(p["nota"])))
-        voce.add(rumps.MenuItem("Apri il terminale qui",
-                                callback=self._terminale(radice)))
+
+        # I terminali gia' APERTI su questo progetto: cliccarli li porta davanti,
+        # invece di aprirne uno nuovo. Se non ce n'e' nessuno, si offre di
+        # aprirlo. Lo stato li rileva gia' (terminali per progetto).
+        aperti = p.get("terminali") or []
+        for t in aperti:
+            attivo = "● " if t.get("claude") else "○ "
+            voce.add(rumps.MenuItem(
+                f"{attivo}Porta davanti  {t.get('tty', '')}",
+                callback=self._porta_davanti(t.get("tty", ""), t.get("app", ""))))
+        if not aperti:
+            voce.add(rumps.MenuItem("Apri un terminale qui",
+                                    callback=self._terminale(radice)))
         voce.add(rumps.MenuItem("Mostra nel Finder",
                                 callback=self._mostra_file(radice)))
         return voce
+
+    def _porta_davanti(self, tty, app):
+        """Porta in primo piano il terminale con quel tty. Se non ci riesce
+        (finestra chiusa nel frattempo), non fa danni."""
+        def cb(_):
+            try:
+                from .terminali import porta_in_primo_piano
+                porta_in_primo_piano(tty, app)
+            except Exception:
+                pass
+        return cb
 
     def _coda(self, d) -> list:
         voci = [rumps.separator]
