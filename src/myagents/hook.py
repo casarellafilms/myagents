@@ -189,7 +189,15 @@ def _inietta(cwd: str, session_id: str = "") -> None:
 
 
 _URL_SERVIZIO = "http://127.0.0.1:7777"
-_TIMEOUT_ATTESA = 0.35
+# Due tetti diversi, di proposito. `apri` scatta sull'evento Notification, che e'
+# raro (una sessione che si ferma ad aspettare): un terzo di secondo li' e'
+# invisibile. `chiudi` scatta su UserPromptSubmit, l'hook piu' caldo, a OGNI
+# messaggio: li' il tetto dev'essere basso, perche' nel caso peggiore -- servizio
+# che accetta la connessione ma tarda a rispondere -- questo tempo lo aspetta
+# l'utente prima che il suo messaggio parta. Meglio una chiusura mancata che un
+# messaggio trattenuto: il popup comunque scade da solo.
+_TIMEOUT_APRI = 0.35
+_TIMEOUT_CHIUDI = 0.12
 
 
 def _segnala_attesa(comando: str, dati: dict) -> None:
@@ -197,11 +205,11 @@ def _segnala_attesa(comando: str, dati: dict) -> None:
 
     Eccezione a P3 dichiarata e circoscritta: qui l'hook fa rete. E' ammesso
     perche' il fine e' la tempestivita' (una sessione ferma ad aspettare va
-    segnalata ORA, non fra venti secondi al prossimo travaso) e perche' e'
-    reso inoffensivo: timeout di un terzo di secondo, fire-and-forget, tutto
-    dentro un try che non lascia risalire niente. Se il servizio e' giu' il
-    POST fallisce in silenzio e nessuna finestra compare -- che e' la cosa
-    giusta, perche' senza servizio non ci sarebbe comunque nulla da mostrare.
+    segnalata ORA, non fra venti secondi al prossimo travaso) e perche' e' reso
+    inoffensivo: timeout stretto, fire-and-forget, tutto dentro un try che non
+    lascia risalire niente. Se il servizio e' giu' il POST fallisce in silenzio
+    e nessuna finestra compare -- giusto cosi': senza servizio non ci sarebbe
+    comunque nulla da mostrare.
     """
     try:
         import urllib.request
@@ -211,7 +219,8 @@ def _segnala_attesa(comando: str, dati: dict) -> None:
             f"{_URL_SERVIZIO}/api/attesa/{comando}", data=corpo, method="POST",
             headers={"Content-Type": "application/json",
                      "X-Myagents-Token": token_locale()})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_ATTESA):
+        timeout = _TIMEOUT_CHIUDI if comando == "chiudi" else _TIMEOUT_APRI
+        with urllib.request.urlopen(req, timeout=timeout):
             pass
     except Exception:
         pass  # mai propagare: un popup mancato non vale una sessione rotta
@@ -249,6 +258,11 @@ def _handle(event_name: str, data: dict) -> None:
     if event_name == "UserPromptSubmit":
         append_event("prompt", {**base, "text": data.get("prompt") or ""})
         _inietta(base["cwd"], base.get("session_id") or "")
+        # Hai scritto nel terminale: se questa sessione aveva una richiesta di
+        # attesa in sospeso, ora l'hai risolta li'. Il popup va tolto subito,
+        # altrimenti resta a mostrare qualcosa a cui hai gia' risposto -- il modo
+        # piu' rapido di fargli perdere fiducia. Il terminale e' la verita'.
+        _segnala_attesa("chiudi", {"session_id": base.get("session_id") or ""})
         return
 
     if event_name == "SessionEnd":
