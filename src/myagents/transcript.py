@@ -132,7 +132,7 @@ def richieste(percorso: str) -> list:
     return fuori
 
 
-def risposte(percorso: str, massimo: int = 14) -> list:
+def risposte(percorso: str, massimo: int = 30) -> list:
     """Cosa l'agente ha DETTO di aver fatto, in coda alla sessione.
 
     Chiude il rischio R3 della specifica: il revisore vedeva le richieste e i
