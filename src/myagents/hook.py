@@ -188,6 +188,35 @@ def _inietta(cwd: str, session_id: str = "") -> None:
     }, ensure_ascii=False))
 
 
+_URL_SERVIZIO = "http://127.0.0.1:7777"
+_TIMEOUT_ATTESA = 0.35
+
+
+def _segnala_attesa(comando: str, dati: dict) -> None:
+    """Consegna al servizio una richiesta di attesa (o la sua chiusura).
+
+    Eccezione a P3 dichiarata e circoscritta: qui l'hook fa rete. E' ammesso
+    perche' il fine e' la tempestivita' (una sessione ferma ad aspettare va
+    segnalata ORA, non fra venti secondi al prossimo travaso) e perche' e'
+    reso inoffensivo: timeout di un terzo di secondo, fire-and-forget, tutto
+    dentro un try che non lascia risalire niente. Se il servizio e' giu' il
+    POST fallisce in silenzio e nessuna finestra compare -- che e' la cosa
+    giusta, perche' senza servizio non ci sarebbe comunque nulla da mostrare.
+    """
+    try:
+        import urllib.request
+        from .paths import token_locale
+        corpo = json.dumps(dati).encode("utf-8")
+        req = urllib.request.Request(
+            f"{_URL_SERVIZIO}/api/attesa/{comando}", data=corpo, method="POST",
+            headers={"Content-Type": "application/json",
+                     "X-Myagents-Token": token_locale()})
+        with urllib.request.urlopen(req, timeout=_TIMEOUT_ATTESA):
+            pass
+    except Exception:
+        pass  # mai propagare: un popup mancato non vale una sessione rotta
+
+
 def _handle(event_name: str, data: dict) -> None:
     base = {
         "session_id": data.get("session_id"),
@@ -224,6 +253,26 @@ def _handle(event_name: str, data: dict) -> None:
 
     if event_name == "SessionEnd":
         append_event("session_end", base)
+        # Alla fine della sessione le sue richieste di attesa non hanno piu'
+        # senso: si dice al servizio di chiuderle, cosi' il popup non resta su
+        # per una sessione che non c'e' piu'.
+        _segnala_attesa("chiudi", {"session_id": base.get("session_id") or ""})
+        return
+
+    if event_name == "Notification":
+        # MISURATO (sonda): l'evento porta notification_type/message/session_id/
+        # cwd. E' il segnale che una sessione si e' fermata ad aspettare
+        # l'utente. Si consegna al servizio, che decide se e come mostrarlo. Qui
+        # l'hook non decide niente e non blocca: fire-and-forget con timeout
+        # cortissimo, e mai un'eccezione che risalga (romperebbe la sessione).
+        _segnala_attesa("apri", {
+            "notification_type": data.get("notification_type") or "",
+            "message": data.get("message") or "",
+            "session_id": base.get("session_id") or "",
+            "cwd": base.get("cwd") or "",
+            "prompt_id": data.get("prompt_id") or "",
+            "tool_use_id": data.get("tool_use_id") or "",
+        })
         return
 
     if event_name != "PostToolUse":

@@ -37,7 +37,12 @@ MARKER = "myagents.hook"
 # dell'harness: senza di loro nel matcher l'hook non scatta proprio e il
 # mirror delle cose da fare ha copertura ZERO (verificato sul campo).
 POST_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash|TodoWrite|TaskCreate|TaskUpdate"
-EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "SessionEnd"]
+# Notification scatta quando una sessione si ferma ad aspettare l'utente
+# (misurato: notification_type='idle_prompt', message='Claude is waiting for
+# your input'). E' il segnale del popup. Senza matcher: i tipi si filtrano nel
+# codice, dove un tipo nuovo si tratta e si traccia invece di sparire.
+EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "SessionEnd",
+          "Notification"]
 
 
 class _Unreadable(RuntimeError):

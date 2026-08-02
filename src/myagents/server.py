@@ -11,16 +11,18 @@ barra mostra dati vecchi, ed e' progettata per dirtelo invece di fingere.
 Ascolta solo su 127.0.0.1: nessuna esposizione fuori dalla macchina.
 """
 import json
+import os
 import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import terminali, workflows
+from . import attesa, terminali, workflows
 from .curator import cura_in_coda
 from .drain import drain
 from .render import _e_rumore
-from .paths import DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, utcnow
+from .paths import (DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, token_locale,
+                    utcnow)
 from .schema import connect, migrate
 from .verify import riverifica_tutto
 
@@ -206,6 +208,59 @@ _pannelli_vivi: list = []
 _workflow_vivi: list = []
 
 
+# Le richieste di attesa che il popup deve mostrare ORA, ricalcolate dal thread
+# e lette dagli endpoint senza toccare la coda a ogni richiesta.
+_attesa_da_mostrare: list = []
+_ciottolo_pid = None
+
+
+def _assicura_ciottolo() -> None:
+    """Fa in modo che ci sia UN Ciottolo vivo, e uno solo.
+
+    Se ne lancia un altro solo quando il precedente e' morto (coda svuotata,
+    watchdog, crash): tenerne il pid ed evitare i doppioni e' cio' che tiene la
+    scrivania pulita. Il Ciottolo poi si chiude da solo quando non c'e' piu'
+    niente -- il servizio non deve inseguirlo per spegnerlo.
+    """
+    global _ciottolo_pid
+    if _ciottolo_pid is not None:
+        try:
+            os.kill(_ciottolo_pid, 0)
+            return  # ancora vivo
+        except OSError:
+            _ciottolo_pid = None
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    python = os.path.join(repo, "venv", "bin", "python")
+    src = os.path.join(repo, "src")
+    try:
+        p = subprocess.Popen(
+            [python, "-c", f"import sys;sys.path.insert(0,{src!r});"
+                           "from myagents.ciottolo import main;main()"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        _ciottolo_pid = p.pid
+    except OSError:
+        pass
+
+
+def _guarda_attesa() -> None:
+    """Tiene aggiornato cosa il popup deve mostrare, e lo apre quando serve.
+
+    Il calcolo sta qui e non negli endpoint perche' la finestra interroga
+    /api/attesa spesso: la risposta dev'essere una copia gia' pronta, non un
+    ricalcolo a ogni richiesta.
+    """
+    global _attesa_da_mostrare
+    while True:
+        try:
+            _attesa_da_mostrare = _coda_attesa.da_mostrare(is_disabled())
+            if _attesa_da_mostrare and not is_disabled():
+                _assicura_ciottolo()
+        except Exception:
+            pass  # il popup e' un extra: mai fermare il servizio
+        time.sleep(1.0)
+
+
 def _workflow_correnti() -> list:
     """L'ultimo quadro noto delle squadre di agenti.
 
@@ -348,7 +403,78 @@ def stato() -> dict:
     }
 
 
+# La coda delle richieste di attesa (il cervello del popup). Vive qui, in
+# memoria: se il servizio muore la coda muore con lui, ed e' corretto -- una
+# richiesta di attesa e' vera solo finche' la sessione e il servizio sono vivi.
+_coda_attesa = attesa.Coda()
+
+# Le azioni che parlano a una sessione o al popup dell'utente. Oltre all'origine
+# locale richiedono il token segreto (~/.myagents/token): una pagina web non lo
+# ha, un altro processo locale qualunque nemmeno. Le azioni sui task (conferma,
+# archivia) NON sono qui: bastano dell'origine, e chiederle protette
+# complicherebbe la dashboard senza aggiungere sicurezza reale.
+AZIONI_PROTETTE = {"attesa/apri", "attesa/chiudi", "attesa/silenzio"}
+
+
+def _rinfresca_attesa() -> None:
+    """Ricalcola subito cosa mostrare, invece di aspettare il giro del thread.
+
+    Senza, fra l'arrivo di una richiesta e la sua comparsa passava fino a un
+    secondo intero: troppo, per qualcosa che nasce per avvisarti in tempo. Dopo
+    ogni apri/chiudi/silenzio la copia e' aggiornata all'istante, e la finestra
+    la vede al suo prossimo poll.
+    """
+    global _attesa_da_mostrare
+    try:
+        _attesa_da_mostrare = _coda_attesa.da_mostrare(is_disabled())
+        if _attesa_da_mostrare and not is_disabled():
+            _assicura_ciottolo()
+    except Exception:
+        pass
+
+
+def _azione_attesa(comando: str, dati: dict) -> dict:
+    """I comandi del popup. Separati da azione() perche' hanno regole loro."""
+    if comando == "attesa/apri":
+        arg = attesa.da_notification(dati)
+        if not arg:
+            return {"ok": False, "errore": "notifica non interpretabile"}
+        tty = ""
+        # Si arricchisce con il tty del terminale della sessione, se lo si
+        # conosce: e' cio' che permette al popup di NON mostrarsi quando quel
+        # terminale e' gia' davanti, e di portartici con un clic.
+        for p in _pannelli_vivi:
+            if p.get("cwd") and arg.get("cwd") and p["cwd"] == arg["cwd"]:
+                tty = p.get("tty", "")
+                break
+        k = _coda_attesa.apri(
+            arg["tipo"], arg["session_id"], arg["dettaglio"],
+            testo=arg["testo"], cwd=arg["cwd"], tty=tty)
+        _rinfresca_attesa()
+        return {"ok": True, "chiave": k}
+
+    if comando == "attesa/chiudi":
+        bersaglio = (dati or {}).get("chiave") or (dati or {}).get("session_id")
+        if not bersaglio:
+            return {"ok": False, "errore": "niente da chiudere"}
+        n = _coda_attesa.chiudi(bersaglio)
+        _rinfresca_attesa()
+        return {"ok": True, "chiuse": n}
+
+    if comando == "attesa/silenzio":
+        ambito = (dati or {}).get("ambito") or "tutto"
+        secondi = float((dati or {}).get("secondi") or 900)
+        _coda_attesa.silenzia(ambito, secondi)
+        _rinfresca_attesa()
+        return {"ok": True, "ambito": ambito, "secondi": secondi}
+
+    return {"ok": False, "errore": "comando di attesa sconosciuto"}
+
+
 def azione(comando: str, dati: dict) -> dict:
+    if comando.startswith("attesa/"):
+        return _azione_attesa(comando, dati)
+
     """Le poche azioni che la dashboard puo' compiere.
 
     Volutamente poche: il database e' l'unica fonte di verita' e la dashboard
@@ -449,7 +575,14 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if not self._e_locale():
                 return self._vietato()
-            if self.path.startswith("/api/stato"):
+            if self.path.startswith("/api/attesa"):
+                # Endpoint leggero: la finestra lo interroga spesso, quindi non
+                # deve toccare il database. Ritorna la copia gia' calcolata dal
+                # watchdog, non un ricalcolo.
+                self._rispondi(json.dumps(
+                    {"richieste": list(_attesa_da_mostrare)},
+                    ensure_ascii=False).encode("utf-8"))
+            elif self.path.startswith("/api/stato"):
                 self._rispondi(json.dumps(stato(), ensure_ascii=False).encode("utf-8"))
             else:
                 from .dashboard import PAGINA
@@ -468,9 +601,17 @@ class _Handler(BaseHTTPRequestHandler):
             # archiviato un task davvero, e la risposta e' stata {"ok": true}.
             if not self._e_locale():
                 return self._vietato()
+            # Comando a piu' livelli: /api/attesa/apri -> "attesa/apri",
+            # /api/conferma -> "conferma".
+            comando = self.path.split("/api/", 1)[-1].strip("/")
+            # Le azioni che parlano a una sessione o al popup esigono il token
+            # segreto, che il browser non possiede. Ferma un altro processo
+            # locale qualunque, non solo il browser.
+            if comando in AZIONI_PROTETTE and (
+                    self.headers.get("X-Myagents-Token") != token_locale()):
+                return self._vietato()
             lunghezza = int(self.headers.get("Content-Length") or 0)
             dati = json.loads(self.rfile.read(lunghezza) or b"{}")
-            comando = self.path.rsplit("/", 1)[-1]
             self._rispondi(json.dumps(azione(comando, dati),
                                       ensure_ascii=False).encode("utf-8"))
         except Exception as exc:
@@ -488,6 +629,7 @@ def avvia(porta: int = PORTA, in_background: bool = True) -> ThreadingHTTPServer
     threading.Thread(target=_avvisa_ogni_tanto, daemon=True).start()
     threading.Thread(target=_guarda_i_terminali, daemon=True).start()
     threading.Thread(target=_riverifica_ogni_tanto, daemon=True).start()
+    threading.Thread(target=_guarda_attesa, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", porta), _Handler)
     if in_background:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()

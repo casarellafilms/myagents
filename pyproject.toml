@@ -8,6 +8,7 @@ dependencies = []
 tk = "myagents.cli:main"
 tk-hook = "myagents.hook:main"
 tk-bar = "myagents.menubar:main"
+tk-ciottolo = "myagents.ciottolo:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

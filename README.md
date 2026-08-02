@@ -90,6 +90,13 @@ them from the session transcript.
 **Terminals.** myagents knows which terminal windows are open on which project, and
 brings the existing one to the front instead of opening a seventh.
 
+**A pebble that tells you when an agent needs you.** When a session stops and waits
+for your input, a small liquid-glass panel appears bottom-right, over everything, without
+stealing focus. It tells you which project is waiting and takes you to the right terminal
+with one click. It never answers for you — replying to an agent is your decision, and a
+popup that made it would defeat the whole point. Toggle it, scope it, silence it per
+project or session. macOS only (PyObjC).
+
 **Agent workflows.** If you run multi-agent workflows, the dashboard shows them live:
 who's running, who finished, each agent named from its own prompt.
 
@@ -131,6 +138,7 @@ tk verify KEY --cmd "pytest -q"     # run it, record it — the only road to gre
 tk cura                             # run the reviewer now, and report what it did
 tk riverifica                       # re-run known verify commands, update states
 tk terminali                        # open terminals and where they are
+tk-ciottolo --demo 5                # preview the waiting-popup (auto-closes)
 tk dash                             # local service + dashboard on 127.0.0.1:7777
 tk doctor                           # health: db, spool, kill switch, error log
 tk drain                            # apply the spool by hand

@@ -56,6 +56,53 @@ def chiave(tipo: str, session_id: str, dettaglio: str) -> str:
     return hashlib.sha256(grezzo.encode("utf-8")).hexdigest()[:32]
 
 
+# Come il campo `notification_type` dell'evento Notification (MISURATO sul campo:
+# vedi ~/.myagents/sonde/eventi.jsonl) diventa un tipo della coda. I nomi a
+# destra sono quelli di TIPI, ordinati per urgenza. Un tipo non in mappa e' un
+# tipo nuovo dell'harness: si tratta come "domanda" e si lascia traccia, invece
+# di ignorarlo in silenzio -- questo progetto e' gia' stato morso dal silenzio.
+_DA_NOTIFICATION = {
+    "permission_prompt": "permesso",
+    "agent_needs_input": "domanda",
+    "elicitation_dialog": "elicitation",
+    "idle_prompt": "inattivo",
+}
+
+
+def da_notification(payload: dict) -> dict | None:
+    """Da un evento Notification grezzo agli argomenti di Coda.apri().
+
+    Lettura difensiva assoluta: un campo mancante vale "non lo so", mai
+    un'eccezione. Ritorna None se non c'e' abbastanza per farne una richiesta
+    (nessun session_id): senza sessione non si saprebbe a chi appartiene, ne'
+    quale terminale portare davanti.
+
+    MISURATO (sonda del 2026-08-02): l'evento porta
+      notification_type, message, session_id, cwd, transcript_path, prompt_id.
+    Il primo tipo visto e' `idle_prompt` con message "Claude is waiting for your
+    input". Gli altri tipi sono attesi ma non ancora osservati: la mappa li
+    prevede, e cio' che non riconosce diventa una domanda tracciata.
+    """
+    if not isinstance(payload, dict):
+        return None
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    grezzo = str(payload.get("notification_type") or "").strip()
+    tipo = _DA_NOTIFICATION.get(grezzo, "domanda")
+    # dettaglio: la cosa piu' stabile che identifica QUESTA richiesta. Mai un
+    # timestamp di stato (misurato: puo' restare fermo).
+    dettaglio = (str(payload.get("tool_use_id") or "").strip()
+                 or str(payload.get("prompt_id") or "").strip()
+                 or grezzo or "attesa")
+    return {
+        "tipo": tipo, "session_id": session_id, "dettaglio": dettaglio,
+        "testo": str(payload.get("message") or "").strip(),
+        "cwd": str(payload.get("cwd") or "").strip(),
+        "tipo_grezzo": grezzo,
+    }
+
+
 class Coda:
     """Le richieste di attesa vive, con la regola di cosa mostrare.
 
