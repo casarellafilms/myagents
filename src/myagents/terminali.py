@@ -263,6 +263,38 @@ return "no"
 """
 
 
+_FRONTMOST = 'tell application "System Events" to get name of first process whose frontmost is true'
+_TTY_FRONT_TERMINAL = ('tell application "Terminal" to get tty of selected tab'
+                       ' of front window')
+_TTY_FRONT_ITERM = ('tell application "iTerm2" to get tty of current session'
+                    ' of current window')
+
+
+def tty_in_primo_piano() -> str:
+    """Il tty del terminale che hai davanti in questo momento, o "".
+
+    Serve al popup per NON comparire sopra la sessione che stai gia' guardando:
+    senza questo dato, il cancello "non disturbare il terminale in focus" non
+    puo' scattare, e il popup diventa rumore proprio nel caso in cui sei gia'
+    li'. Solo lettura: chiede l'app frontmost e, se e' un terminale, il tty
+    della sua finestra davanti. Se l'app in primo piano non e' un terminale,
+    ritorna "" -- e allora nessuna soppressione, il che e' giusto: stai
+    guardando altro.
+    """
+    davanti = _esegui(["osascript", "-e", _FRONTMOST]).strip()
+    if not davanti:
+        return ""
+    # "Terminal", "iTerm2", "iTerm" a seconda della versione.
+    if davanti == "Terminal":
+        script = _TTY_FRONT_TERMINAL
+    elif davanti.startswith("iTerm"):
+        script = _TTY_FRONT_ITERM
+    else:
+        return ""  # l'app davanti non e' un terminale: niente da sopprimere
+    tty = _esegui(["osascript", "-e", script]).strip()
+    return tty[5:] if tty.startswith("/dev/") else tty
+
+
 def porta_in_primo_piano(tty: str, app: str = "") -> bool:
     """Porta davanti il pannello con quel tty. False se non ci riesce.
 

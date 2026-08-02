@@ -212,6 +212,33 @@ _workflow_vivi: list = []
 # e lette dagli endpoint senza toccare la coda a ogni richiesta.
 _attesa_da_mostrare: list = []
 _ciottolo_pid = None
+_tty_focus_cache = {"tty": "", "quando": 0.0}
+
+
+def _tty_focus() -> str:
+    """Il tty del terminale in primo piano, con una cache breve.
+
+    Ogni lettura e' un paio di osascript: chiamarli a ogni rinfresco (che scatta
+    su ogni richiesta di attesa) e ogni secondo dal thread sarebbe troppo. Due
+    secondi di cache: il terminale che hai davanti non cambia dieci volte al
+    secondo, e un popup soppresso mezzo secondo in ritardo non e' un problema.
+    """
+    adesso = time.time()
+    if adesso - _tty_focus_cache["quando"] < 2.0:
+        return _tty_focus_cache["tty"]
+    try:
+        tty = terminali.tty_in_primo_piano()
+    except Exception:
+        tty = ""
+    _tty_focus_cache.update(tty=tty, quando=adesso)
+    return tty
+# Il check-and-spawn del Ciottolo va serializzato: lo chiamano insieme il thread
+# _guarda_attesa (ogni 1s) e ogni worker HTTP che serve una attesa/apri via
+# _rinfresca_attesa. Senza lock, due che vedono `_ciottolo_pid is None` insieme
+# lanciano DUE Ciottoli, e l'ultimo pid scritto vince: il primo processo resta
+# non tracciato e non piu' terminabile -- il processo orfano che questo file
+# giura di non lasciare.
+_lucchetto_ciottolo = threading.Lock()
 
 
 def _assicura_ciottolo() -> None:
@@ -223,24 +250,26 @@ def _assicura_ciottolo() -> None:
     niente -- il servizio non deve inseguirlo per spegnerlo.
     """
     global _ciottolo_pid
-    if _ciottolo_pid is not None:
+    with _lucchetto_ciottolo:
+        if _ciottolo_pid is not None:
+            try:
+                os.kill(_ciottolo_pid, 0)
+                return  # ancora vivo
+            except OSError:
+                _ciottolo_pid = None
+        repo = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        python = os.path.join(repo, "venv", "bin", "python")
+        src = os.path.join(repo, "src")
         try:
-            os.kill(_ciottolo_pid, 0)
-            return  # ancora vivo
+            p = subprocess.Popen(
+                [python, "-c", f"import sys;sys.path.insert(0,{src!r});"
+                               "from myagents.ciottolo import main;main()"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            _ciottolo_pid = p.pid
         except OSError:
-            _ciottolo_pid = None
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    python = os.path.join(repo, "venv", "bin", "python")
-    src = os.path.join(repo, "src")
-    try:
-        p = subprocess.Popen(
-            [python, "-c", f"import sys;sys.path.insert(0,{src!r});"
-                           "from myagents.ciottolo import main;main()"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True)
-        _ciottolo_pid = p.pid
-    except OSError:
-        pass
+            pass
 
 
 def _guarda_attesa() -> None:
@@ -253,7 +282,8 @@ def _guarda_attesa() -> None:
     global _attesa_da_mostrare
     while True:
         try:
-            _attesa_da_mostrare = _coda_attesa.da_mostrare(is_disabled())
+            _attesa_da_mostrare = _coda_attesa.da_mostrare(
+                is_disabled(), in_primo_piano=_tty_focus())
             if _attesa_da_mostrare and not is_disabled():
                 _assicura_ciottolo()
         except Exception:
@@ -426,7 +456,8 @@ def _rinfresca_attesa() -> None:
     """
     global _attesa_da_mostrare
     try:
-        _attesa_da_mostrare = _coda_attesa.da_mostrare(is_disabled())
+        _attesa_da_mostrare = _coda_attesa.da_mostrare(
+            is_disabled(), in_primo_piano=_tty_focus())
         if _attesa_da_mostrare and not is_disabled():
             _assicura_ciottolo()
     except Exception:
@@ -607,8 +638,18 @@ class _Handler(BaseHTTPRequestHandler):
             # Le azioni che parlano a una sessione o al popup esigono il token
             # segreto, che il browser non possiede. Ferma un altro processo
             # locale qualunque, non solo il browser.
+            #
+            # `not token` e' load-bearing: se il token non e' ottenibile (file
+            # vuoto, illeggibile, crash fra creazione e scrittura) token_locale()
+            # ritorna "", e senza questo controllo un header vuoto matcherebbe
+            # "" e passerebbe -- il gate si aprirebbe proprio quando dovrebbe
+            # chiudersi. Fail-closed: niente token, niente azione.
+            # compare_digest per non perdere tempo-costante sul confronto.
+            import hmac
+            token = token_locale()
             if comando in AZIONI_PROTETTE and (
-                    self.headers.get("X-Myagents-Token") != token_locale()):
+                    not token or not hmac.compare_digest(
+                        token, self.headers.get("X-Myagents-Token") or "")):
                 return self._vietato()
             lunghezza = int(self.headers.get("Content-Length") or 0)
             dati = json.loads(self.rfile.read(lunghezza) or b"{}")

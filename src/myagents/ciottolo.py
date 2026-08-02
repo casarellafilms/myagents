@@ -192,8 +192,20 @@ def _costruisci_app(demo_secondi: float = 0.0):
         # -- azioni ----------------------------------------------------------
 
         def vai_(self, sender):
-            r = self._bersagli[sender.tag()]
+            # Difesa contro un ridisegno avvenuto fra la creazione del bottone e
+            # il suo clic: se l'indice non esiste piu', non fare nulla invece di
+            # sollevare un IndexError dentro il run loop di AppKit.
+            i = sender.tag()
+            if not (0 <= i < len(self._bersagli)):
+                return
+            r = self._bersagli[i]
             _post("terminale", {"radice": r.get("cwd") or ""}, self.token)
+            # Cliccare "Vai" significa "me ne occupo io": la richiesta e' gestita
+            # e va chiusa. Copre il caso -- permesso, piano, elicitation -- che
+            # si risolve nel terminale senza passare da un UserPromptSubmit, e
+            # che altrimenti resterebbe appeso fino alla scadenza.
+            if r.get("chiave"):
+                _post("attesa/chiudi", {"chiave": r["chiave"]}, self.token)
 
         # -- ciclo -----------------------------------------------------------
 
@@ -214,6 +226,13 @@ def _costruisci_app(demo_secondi: float = 0.0):
                 elif adesso - self.vuoto_da > VUOTO_S:
                     AppKit.NSApp().terminate_(None)   # niente da mostrare: esco
                     return
+                # Il pannello sparisce: la firma mostrata non vale piu'. Senza
+                # questo, una richiesta IDENTICA che riappare entro VUOTO_S (un
+                # flapping realistico: focus perso e ripreso, silenzio scaduto)
+                # avrebbe la stessa firma, salterebbe il ridisegno, e il
+                # pannello resterebbe ad alpha 0 -- una richiesta viva che non
+                # vedi, e un processo vivo che non sai perche' c'e'.
+                self._firma = None
                 self._svanisci()
                 return
             self.vuoto_da = 0.0
