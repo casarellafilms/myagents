@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import attesa, terminali, workflows
-from .curator import cura_in_coda
+from .curator import cura_in_coda, cura_profonda_tutti
 from .drain import drain
 from .render import _e_rumore
 from .paths import (DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, popup_attivo,
@@ -166,6 +166,44 @@ def _cura_ogni_tanto() -> None:
             cura_adesso()
         except Exception:
             pass  # il revisore e' un extra: non deve mai fermare il servizio
+
+
+# Stato del revisore profondo, per la barra e la dashboard: quando ha girato
+# l'ultima volta, cosa ne e' uscito, e se sta girando ora.
+_ultima_profonda = {"quando": 0.0, "esiti": [], "in_corso": False, "prossimo": 0.0}
+_lucchetto_profonda = threading.Lock()
+# Piu' raro della cura di sessione: passa in rassegna interi progetti, e
+# l'arretrato non cambia ogni minuto.
+INTERVALLO_PROFONDA = 900
+
+
+def profonda_adesso() -> dict:
+    """Fa girare il revisore profondo subito. E' il pulsante e il giro periodico."""
+    if is_disabled():
+        return {"ok": False, "errore": "la cattura e' in pausa"}
+    if not _lucchetto_profonda.acquire(blocking=False):
+        return {"ok": False, "errore": "il revisore profondo sta gia' girando"}
+    _ultima_profonda["in_corso"] = True
+    try:
+        conn = connect(); migrate(conn)
+        esiti = cura_profonda_tutti(conn, massimo=3)
+        _ultima_profonda.update(quando=time.time(), esiti=esiti)
+        return {"ok": True, "esiti": esiti}
+    except Exception as exc:
+        return {"ok": False, "errore": f"{type(exc).__name__}: {exc}"}
+    finally:
+        _ultima_profonda["in_corso"] = False
+        _lucchetto_profonda.release()
+
+
+def _profonda_ogni_tanto() -> None:
+    while True:
+        _ultima_profonda["prossimo"] = time.time() + INTERVALLO_PROFONDA
+        time.sleep(INTERVALLO_PROFONDA)
+        try:
+            profonda_adesso()
+        except Exception:
+            pass  # il revisore profondo e' un extra: mai fermare il servizio
 
 
 _ultima_riverifica = {"quando": 0.0, "chiusi": [], "riaperti": [], "esaminati": 0}
@@ -443,6 +481,7 @@ def stato() -> dict:
         # Senza questi tre numeri "non compaiono task" ha due spiegazioni
         # indistinguibili: non c'era niente da estrarre, oppure e' rotto.
         "revisore": {**_ultima_cura, "ogni": INTERVALLO_CURA},
+        "profonda": {**_ultima_profonda, "ogni": INTERVALLO_PROFONDA},
         "riverifica": {**_ultima_riverifica, "ogni": INTERVALLO_RIVERIFICA},
         "terminali": list(_pannelli_vivi),
         # Le squadre di agenti che stanno girando. Mentre lavorano non si vede
@@ -572,6 +611,9 @@ def azione(comando: str, dati: dict) -> dict:
     if comando == "riverifica":
         return riverifica_adesso()
 
+    if comando == "profonda":
+        return profonda_adesso()
+
     if comando == "cura":
         # Il revisore a richiesta: aspettare tre minuti per sapere se funziona
         # e' il motivo per cui non si controlla mai.
@@ -697,6 +739,7 @@ class _Handler(BaseHTTPRequestHandler):
 def avvia(porta: int = PORTA, in_background: bool = True) -> ThreadingHTTPServer:
     threading.Thread(target=_travasa_ogni_tanto, daemon=True).start()
     threading.Thread(target=_cura_ogni_tanto, daemon=True).start()
+    threading.Thread(target=_profonda_ogni_tanto, daemon=True).start()
     threading.Thread(target=_avvisa_ogni_tanto, daemon=True).start()
     threading.Thread(target=_guarda_i_terminali, daemon=True).start()
     threading.Thread(target=_riverifica_ogni_tanto, daemon=True).start()
