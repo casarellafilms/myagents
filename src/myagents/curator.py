@@ -217,8 +217,11 @@ class NonTrovato(RuntimeError):
     """
 
 
-def _chiedi(testo: str) -> dict | None:
+def _chiedi(testo: str, istruzioni: str = ISTRUZIONI) -> dict | None:
     """Invoca il segretario in sandbox. None se non risponde o risponde male.
+
+    `istruzioni` e' il system prompt: di default quello dell'archivista, ma la
+    cura profonda ne passa uno suo (rivalutare i task contro le prove).
 
     Solleva NonTrovato se l'eseguibile di Claude Code non esiste: quello non e'
     "risponde male", e' "non e' stato chiesto niente a nessuno".
@@ -260,7 +263,7 @@ def _chiedi(testo: str) -> dict | None:
         "--settings", '{"hooks":{}}',  # nessun hook di terzi nel suo contesto
         "--strict-mcp-config",         # nessun server MCP
         "--no-session-persistence",    # non lascia sessioni su disco
-        "--system-prompt", ISTRUZIONI,
+        "--system-prompt", istruzioni,
         testo,
     ]
     try:
@@ -578,4 +581,142 @@ def cura_in_coda(conn, massimo: int = 2) -> list:
                 pass
             esiti.append({"ok": False, "sessione": sid,
                           "errore": f"{type(exc).__name__}: {exc}"})
+    return esiti
+
+
+# --- revisore profondo: rivaluta l'arretrato dei task contro le prove reali ---
+
+ISTRUZIONI_PROFONDA = """Sei un revisore che rivaluta i task ancora aperti di un
+progetto guardando cosa e' stato DAVVERO fatto: i commit git recenti e le ultime
+richieste dell'utente.
+
+Regole di ferro:
+- Rispondi SOLO con un oggetto JSON, senza testo attorno.
+- Forma: {"decisioni":[{"chiave":"...","azione":"...","motivo":"...","verify_cmd":"..."}]}
+- Una decisione per OGNI task che ricevi, con la sua chiave ESATTA.
+- `azione`: uno fra:
+  - "claimed"      -> un commit o una richiesta mostra che e' stato fatto (giallo, da verificare). Cita la prova.
+  - "archivia"     -> chiaramente obsoleto, duplicato o superato. Solo con motivo forte.
+  - "verificabile" -> esiste un comando ovvio per provarlo: mettilo in "verify_cmd".
+  - "resta"        -> nessuna prova concreta. Nel dubbio, SEMPRE "resta".
+- NON dire mai che un task e' verde: quello lo decide solo l'esecuzione di un comando.
+- Prudenza: meglio lasciare un task aperto che chiuderne uno ancora da fare."""
+
+_PROVE_COMMIT = 40
+
+
+def _prove_progetto(conn, pid: int) -> tuple[str, list]:
+    """Il testo di prova per la cura profonda: task aperti + commit + richieste."""
+    key, radice = conn.execute(
+        "SELECT key, root_path FROM projects WHERE id = ?", (pid,)).fetchone()
+    task = conn.execute(
+        "SELECT task_key, title, status FROM tasks WHERE project_id = ?"
+        " AND status IN ('open','in_progress','claimed') ORDER BY id", (pid,)).fetchall()
+    if not task:
+        return "", []
+
+    commit = ""
+    if radice and os.path.isdir(radice):
+        try:
+            esito = subprocess.run(
+                ["git", "-C", radice, "log", "--oneline", f"-{_PROVE_COMMIT}"],
+                capture_output=True, text=True, timeout=8)
+            commit = esito.stdout if esito.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            commit = ""
+
+    richieste = [t for (t,) in conn.execute(
+        "SELECT text FROM prompts WHERE project_id = ? ORDER BY id DESC LIMIT 15",
+        (pid,)) if not _e_rumore(t)]
+
+    parti = [f"PROGETTO: {key}", "", "TASK ANCORA APERTI (decidi per ognuno):"]
+    parti += [f"- [{s}] {k} :: {t}" for k, t, s in task]
+    if commit:
+        parti += ["", "COMMIT RECENTI (le prove di cosa e' stato fatto):", commit.strip()]
+    if richieste:
+        parti += ["", "ULTIME RICHIESTE DELL'UTENTE:"]
+        parti += [f"- {' '.join(str(r).split())[:200]}" for r in richieste[:10]]
+    return "\n".join(parti), [k for k, _, _ in task]
+
+
+def _applica_profonda(conn, pid: int, decisioni: list) -> dict:
+    """Applica le decisioni della cura profonda. Mai 'verified' (solo l'harness)."""
+    adesso = utcnow()
+    conta = {"claimed": 0, "verificabile": 0, "archivia": 0, "resta": 0}
+    validi = {k for (k,) in conn.execute(
+        "SELECT task_key FROM tasks WHERE project_id = ?", (pid,))}
+    for d in decisioni:
+        if not isinstance(d, dict):
+            continue
+        chiave, azione = d.get("chiave"), d.get("azione")
+        if chiave not in validi:
+            continue
+        riga = conn.execute(
+            "SELECT id, status FROM tasks WHERE task_key = ?", (chiave,)).fetchone()
+        if not riga:
+            continue
+        tid, stato = riga
+        if azione == "claimed" and stato in ("open", "in_progress"):
+            conn.execute("UPDATE tasks SET status='claimed', claimed_at=?,"
+                         " updated_at=? WHERE id=?", (adesso, adesso, tid))
+            conn.execute(
+                "INSERT INTO evidence (task_id,kind,payload,source,ts) VALUES (?,?,?,?,?)",
+                (tid, "claim", json.dumps({"da": "cura-profonda",
+                 "prova": str(d.get("motivo", ""))[:400]}, ensure_ascii=False),
+                 "mcp", adesso))
+            conta["claimed"] += 1
+        elif azione == "archivia":
+            conn.execute("UPDATE tasks SET status='archived', updated_at=? WHERE id=?",
+                         (adesso, tid))
+            conta["archivia"] += 1
+        elif azione == "resta":
+            conta["resta"] += 1
+        cmd = d.get("verify_cmd")
+        if cmd and isinstance(cmd, str) and cmd.strip():
+            conn.execute("UPDATE tasks SET verify_cmd=?, updated_at=? WHERE id=?",
+                         (cmd.strip(), adesso, tid))
+            if azione == "verificabile":
+                conta["verificabile"] += 1
+    return conta
+
+
+def cura_profonda(conn, pid: int) -> dict:
+    """Rivaluta TUTTI i task aperti di un progetto contro le prove reali.
+
+    E' il revisore profondo, integrato: dove la cura di sessione guarda solo la
+    sessione appena chiusa, questa guarda l'arretrato di un intero progetto e lo
+    confronta con i commit git e le richieste recenti -- cosi' i task fatti in
+    sessioni diverse da quella che li ha creati vengono finalmente riconosciuti.
+
+    Una chiamata al modello per progetto (non un workflow di molti agenti):
+    economica abbastanza da girare periodicamente. Le prove le raccoglie qui in
+    Python (git log, task, richieste) e le passa nel prompt, perche' il modello
+    gira in sandbox senza strumenti.
+    """
+    testo, chiavi = _prove_progetto(conn, pid)
+    if not testo:
+        return {"saltata": True, "motivo": "nessun task aperto"}
+    try:
+        risposta = _chiedi(testo, istruzioni=ISTRUZIONI_PROFONDA)
+    except NonTrovato as exc:
+        return {"ok": False, "errore": str(exc)}
+    if not risposta or not isinstance(risposta.get("decisioni"), list):
+        return {"ok": False, "errore": "nessuna decisione interpretabile"}
+    conta = _applica_profonda(conn, pid, risposta["decisioni"])
+    return {"ok": True, "esaminati": len(chiavi), **conta}
+
+
+def cura_profonda_tutti(conn, massimo: int = 3) -> list:
+    """Cura in profondita' i progetti con piu' task aperti, pochi per volta."""
+    righe = conn.execute(
+        "SELECT p.id, COUNT(t.id) n FROM projects p"
+        " JOIN tasks t ON t.project_id = p.id"
+        " WHERE t.status IN ('open','in_progress','claimed')"
+        " GROUP BY p.id ORDER BY n DESC LIMIT ?", (massimo,)).fetchall()
+    esiti = []
+    for pid, _n in righe:
+        try:
+            esiti.append(cura_profonda(conn, pid))
+        except Exception as exc:
+            _log(f"cura profonda progetto {pid}: {type(exc).__name__}: {exc}")
     return esiti
