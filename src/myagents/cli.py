@@ -124,6 +124,29 @@ def _cmd_cura(args) -> int:
     return 0
 
 
+def _cmd_profonda(_args) -> int:
+    """Il revisore profondo: rivaluta l'arretrato dei task contro i commit git.
+
+    Gira gia' da solo nel servizio ogni 15 minuti; questo comando lo forza ora.
+    """
+    from .server import profonda_adesso
+    esito = profonda_adesso()
+    if not esito.get("ok"):
+        print(f"errore: {esito.get('errore')}", file=sys.stderr)
+        return 1
+    for e in esito.get("esiti", []):
+        if e.get("ok"):
+            print(f"* {e.get('esaminati', 0)} task esaminati · "
+                  f"{e.get('claimed', 0)} → giallo · "
+                  f"{e.get('verificabile', 0)} verificabili · "
+                  f"{e.get('archivia', 0)} archiviati · {e.get('resta', 0)} restano")
+        elif e.get("saltata"):
+            print(f"- saltato: {e.get('motivo')}")
+        else:
+            print(f"! {e.get('errore')}")
+    return 0
+
+
 def _cmd_riverifica(args) -> int:
     """Riesegue i comandi di verifica salvati e aggiorna gli stati.
 
@@ -238,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     p_cura.add_argument("--massimo", type=int,
                         help="quante sessioni al massimo (default: decide da solo)")
     p_cura.set_defaults(func=_cmd_cura)
+
+    sub.add_parser("profonda", help="rivaluta l'arretrato dei task contro i commit"
+                   ).set_defaults(func=_cmd_profonda)
 
     p_riv = sub.add_parser("riverifica",
                            help="riesegue le verifiche note e aggiorna gli stati")
