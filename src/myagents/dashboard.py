@@ -177,6 +177,14 @@ main{padding:26px 28px 8px;display:grid;gap:20px;
 
 .card{background:var(--card);border:1px solid var(--bordo);border-radius:14px;
   box-shadow:var(--ombra);overflow:hidden;display:flex;flex-direction:column}
+.card.inattivo{opacity:.62}
+.salute{display:inline-flex;gap:3px;align-items:center;font-weight:560}
+.salute .punto{width:7px;height:7px;border-radius:99px;background:var(--tenuissimo);
+  display:inline-block;margin:0 1px 0 4px}
+.salute .punto[style]{margin-left:2px}
+.salute .punto.claimed{background:var(--giallo)}
+.separatore-fermi{grid-column:1/-1;font-size:11.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--tenuissimo);margin:6px 2px 0}
 .testa{padding:16px 18px 13px;border-bottom:1px solid var(--bordo-2)}
 .nome{font-size:15.5px;font-weight:640;letter-spacing:-.015em;
   display:flex;align-items:center;gap:7px;overflow-wrap:anywhere}
@@ -323,16 +331,20 @@ function card(p){
       ${p.file.map(f => percorso(f, p.radice)).join("")}
     </div>` : "";
 
-  return `<section class="card">
+  // Salute a colpo d'occhio: pallini verdi/gialli/grigi coi conteggi.
+  const salute = `<span class="salute">${
+    p.verdi ? `<i class="punto" style="background:var(--verde)"></i>${p.verdi}` : ""}${
+    p.claimed ? `<i class="punto claimed"></i>${p.claimed}` : ""}${
+    p.aperti ? `<i class="punto"></i>${p.aperti}` : ""}</span>`;
+
+  return `<section class="card ${p.inattivo ? 'inattivo' : ''}">
     <div class="testa">
       <div class="nome">${nomeProgetto(p.key)}
         <span class="alias">${(p.alias||[]).map(a =>
           `<span class="badge ${esc(a.replace("claude-",""))}" title="rilevato dall'alias ${esc(a)}">${esc(a)}</span>`).join("")}</span>
       </div>
-      <div class="stat"><b>${p.attivita}</b> attività · ultima ${quando(p.ultima)}${
-        p.in_coda ? ` · <span style="color:var(--tenuissimo)">${p.in_coda} sessioni da analizzare</span>` : ""}${
-        p.claimed ? ` · <span style="color:var(--giallo)"><b>${p.claimed}</b> da confermare</span>` : ""}${
-        p.aperti ? ` · <b>${p.aperti}</b> aperti` : ""}</div>
+      <div class="stat">${salute} · <b>${p.attivita}</b> attività · ultima ${quando(p.ultima)}${
+        p.in_coda ? ` · <span style="color:var(--tenuissimo)">${p.in_coda} sessioni da analizzare</span>` : ""}</div>
     </div>
     ${richiesta}${task}${file}</section>`;
 }
@@ -525,7 +537,14 @@ async function carica(){
 
   disegnaSquadre(d.workflow);
 
-  $("#main").innerHTML = d.progetti.length ? d.progetti.map(card).join("")
+  // I progetti fermi da settimane vanno in fondo, dietro un separatore: la vista
+  // principale resta su cio' su cui lavori davvero.
+  const attivi = d.progetti.filter(p => !p.inattivo);
+  const fermi = d.progetti.filter(p => p.inattivo);
+  const html = attivi.map(card).join("") + (fermi.length
+    ? `<div class="separatore-fermi">${fermi.length} progetti fermi da oltre due settimane</div>`
+      + fermi.map(card).join("") : "");
+  $("#main").innerHTML = d.progetti.length ? html
     : `<div class="niente">Nessuna attività registrata ancora.<br>
        Apri Claude Code in un progetto e lavora normalmente:<br>
        comparirà qui entro una ventina di secondi.</div>`;

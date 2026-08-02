@@ -10,6 +10,7 @@ barra mostra dati vecchi, ed e' progettata per dirtelo invece di fingere.
 
 Ascolta solo su 127.0.0.1: nessuna esposizione fuori dalla macchina.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -40,6 +41,9 @@ GIORNI_PRIMA_DI_AVVISARE = 2
 # Ogni quanto si ricontrolla quali terminali sono aperti e dove. Piu' fitto di
 # cosi' non serve: le finestre non si aprono e chiudono dieci volte al minuto.
 INTERVALLO_TERMINALI = 8
+# Un progetto fermo da piu' di tanti giorni e' "inattivo": la dashboard lo mette
+# da parte, cosi' la vista principale resta su cio' su cui lavori davvero.
+GIORNI_INATTIVO = 14
 # Ogni quanto si rieseguono i comandi di verifica salvati. Dieci minuti: e' il
 # meccanismo che chiude i task da solo, e non deve pesare -- ogni giro esegue
 # davvero dei comandi, quindi va tenuto raro e a lotti piccoli.
@@ -425,8 +429,20 @@ def stato() -> dict:
         # tenerlo nell'elenco riempirebbe la barra di rumore.
         if not attivita:
             continue
+        # Salute del progetto a colpo d'occhio, e se e' fermo da un pezzo.
+        verdi = conn.execute("SELECT COUNT(*) FROM tasks WHERE project_id=?"
+                             " AND status='verified'", (pid,)).fetchone()[0]
+        giorni = None
+        if ultima:
+            try:
+                giorni = (datetime.datetime.utcnow() - datetime.datetime.strptime(
+                    ultima, "%Y-%m-%dT%H:%M:%SZ")).days
+            except (ValueError, TypeError):
+                giorni = None
         progetti.append({
             "id": pid, "key": key, "aperti": aperti, "claimed": claimed,
+            "verdi": verdi, "giorni_fermo": giorni,
+            "inattivo": bool(giorni is not None and giorni >= GIORNI_INATTIVO),
             "attivita": attivita, "ultima": ultima, "radice": radice,
             "nota": iniezione or "",
             "task": [
