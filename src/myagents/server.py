@@ -461,6 +461,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         try:
+            # QUI serve piu' che su do_GET, ed era l'unico posto in cui mancava.
+            # Un POST con Content-Type text/plain e' una "richiesta semplice":
+            # nessun preflight, quindi qualunque pagina aperta nel browser lo
+            # spedisce. Verificato dal vivo: un POST con Origin falso ha
+            # archiviato un task davvero, e la risposta e' stata {"ok": true}.
+            if not self._e_locale():
+                return self._vietato()
             lunghezza = int(self.headers.get("Content-Length") or 0)
             dati = json.loads(self.rfile.read(lunghezza) or b"{}")
             comando = self.path.rsplit("/", 1)[-1]
