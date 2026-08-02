@@ -168,6 +168,15 @@ class Barra(rumps.App):
         u = d.get("ultimo_travaso") or {}
         if u.get("errore"):
             voci.append(rumps.MenuItem(f"⚠  Travaso: {str(u['errore'])[:44]}"))
+        # Il revisore profondo: se sta girando lo si dice, cosi' non sembra fermo.
+        prof = d.get("profonda") or {}
+        if prof.get("in_corso"):
+            voci.append(rumps.MenuItem("↻  Revisore profondo in corso…"))
+        elif prof.get("quando"):
+            mins = int((datetime.datetime.utcnow().timestamp() - prof["quando"]) // 60)
+            eta = "adesso" if mins < 1 else (f"{mins} min fa" if mins < 60
+                                             else f"{mins // 60} h fa")
+            voci.append(rumps.MenuItem(f"Revisore profondo: {eta}"))
         voci.append(rumps.MenuItem(
             "Riprendi la cattura" if d.get("spento") else "Metti in pausa la cattura",
             callback=self.pausa))

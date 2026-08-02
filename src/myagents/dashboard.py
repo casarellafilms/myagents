@@ -517,6 +517,8 @@ async function carica(){
   if(d.claimed) s.push(`<span class="pill giallo">${d.claimed} da confermare</span>`);
   if(d.aperti)  s.push(`<span class="pill">${d.aperti} task aperti</span>`);
   if(d.spento)  s.push(`<span class="pill rosso">cattura spenta</span>`);
+  if(d.profonda && d.profonda.in_corso)
+    s.push(`<span class="pill viva"><i class="battito"></i>revisore profondo</span>`);
   const u = d.ultimo_travaso || {};
   if(u.errore)  s.push(`<span class="pill rosso">travaso: ${esc(u.errore)}</span>`);
   $("#stato").innerHTML = s.join("");
