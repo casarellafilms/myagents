@@ -1,0 +1,15 @@
+*.db
+*.db-shm
+*.db-wal
+*.pyc
+__pycache__/
+.pytest_cache/
+.superpowers/
+.venv/
+venv/
+probe/
+scratchpad/
+.DS_Store
+.playwright-mcp/
+docs/superpowers/
+NOTE-TEST.md

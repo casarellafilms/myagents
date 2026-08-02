@@ -1,0 +1,24 @@
+[project]
+name = "myagents"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+tk = "myagents.cli:main"
+tk-hook = "myagents.hook:main"
+tk-bar = "myagents.menubar:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+bar = ["rumps>=0.4"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
