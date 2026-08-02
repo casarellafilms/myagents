@@ -561,6 +561,12 @@ def azione(comando: str, dati: dict) -> dict:
 
 
 class _Handler(BaseHTTPRequestHandler):
+    def _path_pulito(self) -> bool:
+        """Rifiuta i path con '..': non aggirano nulla oggi (il comando
+        risultante non matcha nessuna azione), ma un domani in cui si aggiunge
+        un comando potrebbero, e costa una riga chiuderli adesso."""
+        return ".." not in self.path
+
     def _e_locale(self) -> bool:
         """Solo la dashboard servita da questo processo puo' agire.
 
@@ -604,7 +610,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802 (nome imposto da http.server)
         try:
-            if not self._e_locale():
+            if not self._e_locale() or not self._path_pulito():
                 return self._vietato()
             if self.path.startswith("/api/attesa"):
                 # Endpoint leggero: la finestra lo interroga spesso, quindi non
@@ -630,7 +636,7 @@ class _Handler(BaseHTTPRequestHandler):
             # nessun preflight, quindi qualunque pagina aperta nel browser lo
             # spedisce. Verificato dal vivo: un POST con Origin falso ha
             # archiviato un task davvero, e la risposta e' stata {"ok": true}.
-            if not self._e_locale():
+            if not self._e_locale() or not self._path_pulito():
                 return self._vietato()
             # Comando a piu' livelli: /api/attesa/apri -> "attesa/apri",
             # /api/conferma -> "conferma".
