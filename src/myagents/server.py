@@ -489,7 +489,11 @@ def _rinfresca_attesa() -> None:
 def _azione_attesa(comando: str, dati: dict) -> dict:
     """I comandi del popup. Separati da azione() perche' hanno regole loro."""
     if comando == "attesa/apri":
-        arg = attesa.da_notification(dati)
+        # Un PermissionRequest (ha tool_name) porta la domanda con le opzioni;
+        # una Notification porta solo il messaggio. Si prova prima il primo.
+        arg = attesa.da_permission(dati) if dati.get("tool_name") else None
+        if not arg:
+            arg = attesa.da_notification(dati)
         if not arg:
             return {"ok": False, "errore": "notifica non interpretabile"}
         tty = ""
@@ -502,7 +506,8 @@ def _azione_attesa(comando: str, dati: dict) -> dict:
                 break
         k = _coda_attesa.apri(
             arg["tipo"], arg["session_id"], arg["dettaglio"],
-            testo=arg["testo"], cwd=arg["cwd"], tty=tty)
+            testo=arg["testo"], opzioni=arg.get("opzioni"),
+            cwd=arg["cwd"], tty=tty)
         _rinfresca_attesa()
         return {"ok": True, "chiave": k}
 

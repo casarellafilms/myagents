@@ -103,6 +103,56 @@ def da_notification(payload: dict) -> dict | None:
     }
 
 
+# I tool le cui richieste di permesso valgono la pena di un popup: sono quelli
+# in cui l'agente sta chiedendo QUALCOSA all'utente, non eseguendo un comando.
+# Gli altri PermissionRequest (Bash, Edit, ...) sono rumore per il popup.
+_TOOL_CHE_CHIEDONO = {"AskUserQuestion": "domanda", "ExitPlanMode": "piano"}
+
+
+def da_permission(payload: dict) -> dict | None:
+    """Da un evento PermissionRequest agli argomenti di Coda.apri(), con le
+    opzioni della domanda.
+
+    MISURATO (sonda): PermissionRequest porta tool_name e tool_input. Per
+    AskUserQuestion, tool_input.questions e' [{question, header, options:
+    [{label, description}], multiSelect}]. Sono la domanda e i bottoni, gia'
+    pronti da mostrare -- l'unica cosa che serve per far vedere all'utente COSA
+    gli si chiede senza che cambi finestra.
+
+    Ritorna None per i tool che non chiedono niente all'utente (un Bash, un
+    Edit): quelli non meritano un popup.
+    """
+    if not isinstance(payload, dict):
+        return None
+    tool = str(payload.get("tool_name") or "")
+    tipo = _TOOL_CHE_CHIEDONO.get(tool)
+    if not tipo:
+        return None
+    session_id = str(payload.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    ti = payload.get("tool_input")
+    ti = ti if isinstance(ti, dict) else {}
+    domande = ti.get("questions") if isinstance(ti.get("questions"), list) else []
+
+    testo, opzioni = "", []
+    if domande and isinstance(domande[0], dict):
+        prima = domande[0]
+        testo = str(prima.get("question") or "").strip()
+        for o in (prima.get("options") or []):
+            if isinstance(o, dict) and o.get("label"):
+                opzioni.append(str(o["label"]))
+            elif isinstance(o, str):
+                opzioni.append(o)
+    return {
+        "tipo": tipo, "session_id": session_id,
+        "dettaglio": str(payload.get("tool_use_id") or payload.get("prompt_id")
+                         or tool),
+        "testo": testo, "opzioni": opzioni[:6],
+        "cwd": str(payload.get("cwd") or "").strip(),
+    }
+
+
 class Coda:
     """Le richieste di attesa vive, con la regola di cosa mostrare.
 

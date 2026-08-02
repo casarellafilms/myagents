@@ -149,11 +149,21 @@ def _costruisci_app(demo_secondi: float = 0.0):
             titolo.setTextColor_(AppKit.NSColor.labelColor())
             cont.addSubview_(titolo)
 
+            # La domanda e, se e' un AskUserQuestion, le sue opzioni. Le opzioni
+            # si MOSTRANO soltanto: cliccarle qui non risponde -- Claude Code non
+            # lo permette (doc ufficiale). Servono a farti sapere COSA ti si
+            # chiede prima di andare al terminale a scegliere. Stanno nella riga
+            # sotto, dopo la domanda, in una sola stringa per non rompere il
+            # layout con elementi in piu'.
             testo = (r.get("testo") or "").strip()
+            opzioni = r.get("opzioni") or []
+            if opzioni:
+                coda = "  →  " + " · ".join(str(o) for o in opzioni)
+                testo = (testo + coda) if testo else coda.strip(" →")
             if testo:
                 sotto = AppKit.NSTextField.alloc().initWithFrame_(
                     NSMakeRect(0, 6, larg - 70, 16))
-                sotto.setStringValue_(testo[:60])
+                sotto.setStringValue_(testo[:74])
                 sotto.setBezeled_(False); sotto.setDrawsBackground_(False)
                 sotto.setEditable_(False); sotto.setSelectable_(False)
                 sotto.setFont_(AppKit.NSFont.systemFontOfSize_(11.0))
@@ -261,10 +271,11 @@ def _costruisci_app(demo_secondi: float = 0.0):
         # Modalita' prova: mostra due richieste finte, si chiude da sola. Serve a
         # guardarla senza dover provocare un evento reale, e senza restare su.
         c.richieste = [
-            {"chiave": "a", "tipo": "inattivo", "cwd": "/Users/tu/progetto-web",
+            {"chiave": "a", "tipo": "domanda", "cwd": "/Users/tu/progetto-web",
+             "testo": "Come procediamo con la Fase 2?",
+             "opzioni": ["Mostra opzioni", "Fermiamoci qui"]},
+            {"chiave": "b", "tipo": "inattivo", "cwd": "/Users/tu/altro-progetto",
              "testo": "Claude is waiting for your input"},
-            {"chiave": "b", "tipo": "permesso", "cwd": "/Users/tu/altro-progetto",
-             "testo": "Consento di eseguire il comando?"},
         ]
         c._firma = "demo"
         c._ridisegna()

@@ -16,7 +16,7 @@ def test_installs_all_events(install, tmp_path):
     install.install([d], python="/usr/bin/python3", repo="/repo")
     hooks = _settings(d)["hooks"]
     assert set(hooks) == {"SessionStart", "UserPromptSubmit", "PostToolUse",
-                          "SessionEnd", "Notification"}
+                          "SessionEnd", "Notification", "PermissionRequest"}
 
 def test_posttooluse_matcher_covers_needed_tools(install, tmp_path):
     d = tmp_path / ".claude"; d.mkdir()

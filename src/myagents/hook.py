@@ -273,6 +273,26 @@ def _handle(event_name: str, data: dict) -> None:
         _segnala_attesa("chiudi", {"session_id": base.get("session_id") or ""})
         return
 
+    if event_name == "PermissionRequest":
+        # Osserva SOLO. Un hook PermissionRequest che emette una decisione
+        # cambierebbe il permesso; qui non si emette niente su stdout, si fa un
+        # POST fire-and-forget e si esce 0, cosi' il permesso segue il suo corso
+        # normale. Serve per mostrare nel popup la domanda con le sue opzioni
+        # (che stanno nel tool_input): l'utente vede COSA gli si chiede senza
+        # cambiare finestra. La RISPOSTA non passa di qui -- gli hook non possono
+        # rispondere ad AskUserQuestion (verificato sulla doc ufficiale).
+        tool = data.get("tool_name") or ""
+        if tool in ("AskUserQuestion", "ExitPlanMode"):
+            _segnala_attesa("apri", {
+                "tool_name": tool,
+                "tool_input": data.get("tool_input") or {},
+                "session_id": base.get("session_id") or "",
+                "cwd": base.get("cwd") or "",
+                "prompt_id": data.get("prompt_id") or "",
+                "tool_use_id": data.get("tool_use_id") or "",
+            })
+        return
+
     if event_name == "Notification":
         # MISURATO (sonda): l'evento porta notification_type/message/session_id/
         # cwd. E' il segnale che una sessione si e' fermata ad aspettare

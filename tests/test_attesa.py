@@ -3,7 +3,7 @@
 Tutto a orologio finto (`adesso=`) e senza toccare lo schermo: qui si verifica
 la regola di cosa mostrare, non il disegno di una finestra.
 """
-from myagents.attesa import Coda, chiave, TIPI, da_notification
+from myagents.attesa import Coda, chiave, TIPI, da_notification, da_permission
 
 
 def test_chiave_distingue_richieste_diverse():
@@ -148,3 +148,36 @@ def test_da_notification_robusta_a_spazzatura():
 def test_da_notification_tipo_ignoto_diventa_domanda():
     arg = da_notification({"notification_type": "cosa_nuova_2027", "session_id": "s"})
     assert arg["tipo"] == "domanda"          # tipo nuovo: tracciato, non perso
+
+
+# -- da_permission: la domanda con le opzioni dal payload PermissionRequest -----
+
+def test_da_permission_askuserquestion():
+    p = {"tool_name": "AskUserQuestion", "session_id": "s", "cwd": "/p",
+         "tool_input": {"questions": [{"question": "Continuo?", "header": "X",
+             "options": [{"label": "Sì", "description": "a"},
+                         {"label": "No", "description": "b"}]}]}}
+    arg = da_permission(p)
+    assert arg["tipo"] == "domanda"
+    assert arg["testo"] == "Continuo?"
+    assert arg["opzioni"] == ["Sì", "No"]
+
+
+def test_da_permission_ignora_i_tool_che_non_chiedono():
+    # Un Bash/Edit non chiede niente all'utente: niente popup.
+    for tool in ("Bash", "Edit", "Read", "Write"):
+        assert da_permission({"tool_name": tool, "session_id": "s",
+                              "tool_input": {"command": "ls"}}) is None
+
+
+def test_da_permission_robusta_a_questions_malformate():
+    # tool_input senza questions, o questions vuote: non deve sollevare.
+    assert da_permission({"tool_name": "AskUserQuestion", "session_id": "s",
+                          "tool_input": {}})["opzioni"] == []
+    assert da_permission({"tool_name": "AskUserQuestion", "session_id": "s"})[
+        "opzioni"] == []
+
+
+def test_da_permission_senza_sessione_e_none():
+    assert da_permission({"tool_name": "AskUserQuestion",
+                          "tool_input": {"questions": []}}) is None

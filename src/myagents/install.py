@@ -41,8 +41,12 @@ POST_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash|TodoWrite|TaskCreate|Task
 # (misurato: notification_type='idle_prompt', message='Claude is waiting for
 # your input'). E' il segnale del popup. Senza matcher: i tipi si filtrano nel
 # codice, dove un tipo nuovo si tratta e si traccia invece di sparire.
+# PermissionRequest scatta quando un agente sta per usare un tool: myagents lo
+# osserva SOLO per i tool che chiedono qualcosa all'utente (AskUserQuestion,
+# ExitPlanMode), per mostrare nel popup la domanda con le sue opzioni. Non emette
+# mai una decisione: il permesso segue il suo corso normale.
 EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "SessionEnd",
-          "Notification"]
+          "Notification", "PermissionRequest"]
 
 
 class _Unreadable(RuntimeError):
