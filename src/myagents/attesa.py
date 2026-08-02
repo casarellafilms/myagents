@@ -189,11 +189,10 @@ class Coda:
                 "cwd": cwd, "tty": tty,
                 "aperta_a": esistente["aperta_a"] if esistente else adesso,
                 "vista_a": adesso,
-                "mostrata": esistente["mostrata"] if esistente else False,
             }
         return k
 
-    def chiudi(self, chiave_o_session, adesso: float | None = None) -> int:
+    def chiudi(self, chiave_o_session) -> int:
         """Toglie una richiesta per chiave, o tutte quelle di una sessione.
 
         E' la gamba piu' importante: quando rispondi nel terminale, la richiesta
@@ -270,13 +269,7 @@ class Coda:
                                   else len(TIPI), r["aperta_a"]))
         return fuori
 
-    def segna_mostrata(self, chiave_: str, adesso: float | None = None) -> None:
-        adesso = time.time() if adesso is None else adesso
-        with self._lock:
-            if chiave_ in self._richieste:
-                self._richieste[chiave_]["mostrata"] = True
-
     def tutte(self) -> list:
-        """Tutte le richieste vive, mostrabili o no. Per diagnostica e barra."""
+        """Tutte le richieste vive, mostrabili o no. Per diagnostica e test."""
         with self._lock:
             return [dict(r) for r in self._richieste.values()]

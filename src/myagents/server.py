@@ -303,14 +303,11 @@ def _guarda_attesa() -> None:
     /api/attesa spesso: la risposta dev'essere una copia gia' pronta, non un
     ricalcolo a ogni richiesta.
     """
-    global _attesa_da_mostrare
+    # Lo stesso lavoro che fa _rinfresca_attesa dopo ogni apri/chiudi: qui a
+    # ritmo fisso, cosi' anche senza eventi (una richiesta che matura, il focus
+    # che cambia) la copia resta fresca. Un solo posto in cui vive la logica.
     while True:
-        try:
-            _attesa_da_mostrare = _calcola_attesa()
-            if _attesa_da_mostrare and popup_attivo() and not is_disabled():
-                _assicura_ciottolo()
-        except Exception:
-            pass  # il popup e' un extra: mai fermare il servizio
+        _rinfresca_attesa()
         time.sleep(1.0)
 
 

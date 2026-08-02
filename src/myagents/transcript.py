@@ -120,12 +120,12 @@ def richieste(percorso: str) -> list:
                 testo = testo.strip()
                 if not testo:
                     continue
-                chiave = (testo[:400], _normalizza_ts(dato.get("timestamp")))
+                ts = _normalizza_ts(dato.get("timestamp"))
+                chiave = (testo[:400], ts)
                 if chiave in visti:
                     continue
                 visti.add(chiave)
-                fuori.append({"testo": testo[:MAX_TESTO],
-                              "ts": _normalizza_ts(dato.get("timestamp")),
+                fuori.append({"testo": testo[:MAX_TESTO], "ts": ts,
                               "accodata": accodata})
     except OSError:
         return fuori
