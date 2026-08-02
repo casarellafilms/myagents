@@ -3,7 +3,7 @@
 Tutto a orologio finto (`adesso=`) e senza toccare lo schermo: qui si verifica
 la regola di cosa mostrare, non il disegno di una finestra.
 """
-from myagents.attesa import Coda, chiave, TIPI
+from myagents.attesa import Coda, chiave, TIPI, da_notification
 
 
 def test_chiave_distingue_richieste_diverse():
@@ -109,3 +109,42 @@ def test_tipo_sconosciuto_diventa_domanda():
     q = Coda()
     q.apri("qualcosa-di-strano", "s1", "u1", adesso=100)
     assert q.tutte()[0]["tipo"] == "domanda"
+
+
+# -- da_notification: mappa il payload REALE dell'evento Notification ----------
+
+def test_da_notification_payload_reale():
+    # Esattamente la forma misurata dalla sonda il 2026-08-02.
+    p = {"notification_type": "idle_prompt",
+         "message": "Claude is waiting for your input",
+         "session_id": "abc", "cwd": "/p", "prompt_id": "pid-1"}
+    arg = da_notification(p)
+    assert arg["tipo"] == "inattivo"
+    assert arg["session_id"] == "abc"
+    assert arg["dettaglio"] == "pid-1"       # prompt_id, in assenza di tool_use_id
+    assert arg["testo"] == "Claude is waiting for your input"
+
+
+def test_da_notification_tool_use_id_ha_precedenza():
+    p = {"notification_type": "permission_prompt", "session_id": "s",
+         "tool_use_id": "tu-9", "prompt_id": "pid-9"}
+    arg = da_notification(p)
+    assert arg["tipo"] == "permesso"
+    assert arg["dettaglio"] == "tu-9"        # tool_use_id vince su prompt_id
+
+
+def test_da_notification_senza_sessione_e_none():
+    # Senza session_id non si sa a chi appartiene: niente richiesta.
+    assert da_notification({"notification_type": "idle_prompt"}) is None
+
+
+def test_da_notification_robusta_a_spazzatura():
+    # Un payload malformato non deve sollevare, ma ritornare None o una richiesta
+    # tracciata -- mai un'eccezione che risalga fino a rompere qualcosa.
+    for schifo in (None, [], "stringa", 42, {"message": "senza sessione"}):
+        assert da_notification(schifo) is None
+
+
+def test_da_notification_tipo_ignoto_diventa_domanda():
+    arg = da_notification({"notification_type": "cosa_nuova_2027", "session_id": "s"})
+    assert arg["tipo"] == "domanda"          # tipo nuovo: tracciato, non perso
