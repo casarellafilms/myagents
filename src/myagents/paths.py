@@ -37,6 +37,24 @@ def is_disabled() -> bool:
         return False
 
 
+def popup_attivo() -> bool:
+    """True se il popup (il Ciottolo) puo' comparire. Spento di default.
+
+    Opt-in di proposito. La funzione e' giovane e il segnale che la alimenta
+    (l'hook Notification) va registrato con `tk install`: finche' non l'hai
+    acceso di tua volonta', il servizio non lancia mai la finestra, e nessun
+    flash puo' comparire. Si accende con MYAGENTS_POPUP=1, oppure -- piu' comodo
+    -- creando il file ~/.myagents/POPUP (cosi' vale anche per il servizio gia'
+    avviato, senza doverlo riavviare con la variabile).
+    """
+    if os.environ.get("MYAGENTS_POPUP", "").strip().lower() not in _FALSEY:
+        return True
+    try:
+        return (ROOT / "POPUP").exists()
+    except OSError:
+        return False
+
+
 def ensure_dirs() -> None:
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
     INJECTION_DIR.mkdir(parents=True, exist_ok=True)

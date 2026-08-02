@@ -21,8 +21,8 @@ from . import attesa, terminali, workflows
 from .curator import cura_in_coda
 from .drain import drain
 from .render import _e_rumore
-from .paths import (DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, token_locale,
-                    utcnow)
+from .paths import (DB_PATH, ERROR_LOG, SPOOL_DIR, is_disabled, popup_attivo,
+                    token_locale, utcnow)
 from .schema import connect, migrate
 from .verify import riverifica_tutto
 
@@ -213,6 +213,30 @@ _workflow_vivi: list = []
 _attesa_da_mostrare: list = []
 _ciottolo_pid = None
 _tty_focus_cache = {"tty": "", "quando": 0.0}
+# Un'attesa deve durare almeno questo prima di comparire. Un agente che si ferma
+# un istante e riprende non merita un popup: senza questa maturazione ogni pausa
+# di un secondo faceva lampeggiare la finestra. Il popup e' per quando sei via,
+# non per un respiro dell'agente.
+MATURA_DOPO = 3.0
+
+
+def _calcola_attesa() -> list:
+    """Le richieste da mostrare adesso: mature, e non su un terminale in focus.
+
+    L'osascript del focus si interroga SOLO se c'e' gia' qualcosa di maturo da
+    mostrare. Con popup spento o coda vuota non si tocca osascript -- chiamarlo
+    ogni secondo era inutile, e la maturazione elimina il flapping alla radice:
+    un'attesa che si risolve in meno di MATURA_DOPO non appare mai.
+    """
+    if not popup_attivo():
+        return []
+    adesso = time.time()
+    mature = [r for r in _coda_attesa.da_mostrare(is_disabled())
+              if adesso - r.get("aperta_a", adesso) >= MATURA_DOPO]
+    if not mature:
+        return []
+    focus = _tty_focus()
+    return [r for r in mature if not (focus and r.get("tty") == focus)]
 
 
 def _tty_focus() -> str:
@@ -282,9 +306,8 @@ def _guarda_attesa() -> None:
     global _attesa_da_mostrare
     while True:
         try:
-            _attesa_da_mostrare = _coda_attesa.da_mostrare(
-                is_disabled(), in_primo_piano=_tty_focus())
-            if _attesa_da_mostrare and not is_disabled():
+            _attesa_da_mostrare = _calcola_attesa()
+            if _attesa_da_mostrare and popup_attivo() and not is_disabled():
                 _assicura_ciottolo()
         except Exception:
             pass  # il popup e' un extra: mai fermare il servizio
@@ -456,9 +479,8 @@ def _rinfresca_attesa() -> None:
     """
     global _attesa_da_mostrare
     try:
-        _attesa_da_mostrare = _coda_attesa.da_mostrare(
-            is_disabled(), in_primo_piano=_tty_focus())
-        if _attesa_da_mostrare and not is_disabled():
+        _attesa_da_mostrare = _calcola_attesa()
+        if _attesa_da_mostrare and popup_attivo() and not is_disabled():
             _assicura_ciottolo()
     except Exception:
         pass
